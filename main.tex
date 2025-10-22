@@ -1,0 +1,198 @@
+
+\documentclass[12pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{newtxtext,newtxmath}
+\usepackage{setspace}\setstretch{1.5}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{siunitx}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+% Variable origin, value, and standardization:
+% x,y,z (position); F=(F_x,F_y,F_z) force at r=(x,y,z); M=(M_x,M_y,M_z) free couple;
+% MER=1 (ideal, no-loss normalization); g_{ij} (metric for non-Euclidean norm).
+\newcommand{\MER}{1} 
+
+% --------------------- FBD engine (2D/3D-ready; computes numeric resultants) ---------------------
+\newcommand{\FBDInit}{
+  \def\Rfx{0}\def\Rfy{0}\def\Rfz{0}%
+  \def\Rmx{0}\def\Rmy{0}\def\Rmz{0}%
+}
+\newcommand{\AddForce}[6]{% label, Fx,Fy,Fz, x,y,z
+  \pgfmathsetmacro{\Fx}{#2}\pgfmathsetmacro{\Fy}{#3}\pgfmathsetmacro{\Fz}{#4}%
+  \pgfmathsetmacro{\rx}{#5}\pgfmathsetmacro{\ry}{#6}\pgfmathsetmacro{\rz}{#7}%
+  \pgfmathsetmacro{\Rfx}{\Rfx+\Fx}\xdef\Rfx{\Rfx}%
+  \pgfmathsetmacro{\Rfy}{\Rfy+\Fy}\xdef\Rfy{\Rfy}%
+  \pgfmathsetmacro{\Rfz}{\Rfz+\Fz}\xdef\Rfz{\Rfz}%
+  \pgfmathsetmacro{\mcx}{\ry*\Fz-\rz*\Fy}%
+  \pgfmathsetmacro{\mcy}{\rz*\Fx-\rx*\Fz}%
+  \pgfmathsetmacro{\mcz}{\rx*\Fy-\ry*\Fx}%
+  \pgfmathsetmacro{\Rmx}{\Rmx+\mcx}\xdef\Rmx{\Rmx}%
+  \pgfmathsetmacro{\Rmy}{\Rmy+\mcy}\xdef\Rmy{\Rmy}%
+  \pgfmathsetmacro{\Rmz}{\Rmz+\mcz}\xdef\Rmz{\Rmz}%
+}
+\newcommand{\AddCouple}[4]{% label, Mx,My,Mz
+  \pgfmathsetmacro{\Mx}{#2}\pgfmathsetmacro{\My}{#3}\pgfmathsetmacro{\Mz}{#4}%
+  \pgfmathsetmacro{\Rmx}{\Rmx+\Mx}\xdef\Rmx{\Rmx}%
+  \pgfmathsetmacro{\Rmy}{\Rmy+\My}\xdef\Rmy{\Rmy}%
+  \pgfmathsetmacro{\Rmz}{\Rmz+\Mz}\xdef\Rmz{\Rmz}%
+}
+\newcommand{\ResultantVectors}{%
+  \pgfmathsetmacro{\Rmag}{sqrt(\Rfx*\Rfx+\Rfy*\Rfy+\Rfz*\Rfz)}%
+  \pgfmathsetmacro{\Mmag}{sqrt(\Rmx*\Rmx+\Rmy*\Rmy+\Rmz*\Rmz)}%
+  \[
+  \mathbf{R}=\langle \Rfx,\Rfy,\Rfz\rangle,\quad
+  \|\mathbf{R}\|=\Rmag,\qquad
+  \mathbf{M}_O=\langle \Rmx,\Rmy,\Rmz\rangle,\quad
+  \|\mathbf{M}_O\|=\Mmag.
+  \]
+  \[
+  \hat{\mathbf{R}}=\frac{\mathbf{R}}{\max(\Rmag,\MER)},\qquad
+  \hat{\mathbf{M}}=\frac{\mathbf{M}_O}{\max(\Mmag,\MER)}.
+  \]
+}
+
+% --------------------- Non-Euclidean metric, gradient and Taylor mapping ---------------------
+\newcommand{\MetricTensor}{g_{ij}}
+\newcommand{\NonEuclidNorm}[1]{\sqrt{#1_i\,\MetricTensor\,#1_j}}
+\newcommand{\GradF}{\nabla F}
+\newcommand{\TaylorF}[1]{%
+F(\mathbf{q}+\Delta\mathbf{q})\approx F(\mathbf{q})+\GradF^\top\Delta\mathbf{q}+\tfrac12\,\Delta\mathbf{q}^\top H(F)\,\Delta\mathbf{q}%
+}
+
+\title{\textbf{Statics Free-Body Diagram Generator, Resultant \emph{n}-Forces and Coupled \emph{n}-Moments Solver with Gradient--Taylor Mapping and Non-Euclidean Optimization}}
+\author{Stalin Isaias Garc\'ia Mercedes \and Kyle Barnes \and et al.}
+\date{October 8, 2025}
+
+\begin{document}
+\maketitle
+
+\section*{Variable Origin, Value, and Standardization}
+\begin{itemize}
+\item Positions: \( \mathbf{r}_i=(x_i,y_i,z_i)\in\mathbb{R}^3 \).
+\item Forces: \( \mathbf{F}_i=(F_{xi},F_{yi},F_{zi})\in\mathbb{R}^3 \) applied at \( \mathbf{r}_i \).
+\item Free couples: \( \mathbf{M}_i=(M_{xi},M_{yi},M_{zi})\in\mathbb{R}^3 \).
+\item Resultants: \( \mathbf{R}=\sum_i \mathbf{F}_i,\quad \mathbf{M}_O=\sum_i(\mathbf{r}_i\times \mathbf{F}_i)+\sum_i \mathbf{M}_i \).
+\item Normalization constant: \( \mathrm{MER}=\MER \) (ideal no-loss reference magnitude).
+\item Metric: \( g_{ij} \) for non-Euclidean norms \( \|\mathbf{v}\|_g=\sqrt{v_i g_{ij} v_j} \).
+\end{itemize}
+
+\section*{Equilibrium, Gradient, and Taylor Mapping}
+\[
+\mathbf{R}=\mathbf{0},\qquad \mathbf{M}_O=\mathbf{0},
+\]
+\[
+\GradF(\mathbf{q})=\frac{\partial F}{\partial \mathbf{q}},\qquad
+\TaylorF{\mathbf{q}}.
+\]
+
+\section*{Non-Euclidean Optimization}
+\[
+\min_{\mathbf{q}} \;\; \|\mathbf{R}(\mathbf{q})\|_g^2+\|\mathbf{M}_O(\mathbf{q})\|_g^2
+\quad\text{s.t.}\quad \mathbf{q}\in\mathcal{D},\;\; \mathrm{MER}=\MER.
+\]
+
+\section*{Free-Body Diagram (2D Illustration) and Computation}
+\begin{center}
+\begin{tikzpicture}[scale=1.0,>=latex]
+  \draw[->] (-0.5,0)--(6,0) node[right]{$x$};
+  \draw[->] (0,-0.5)--(0,4) node[above]{$y$};
+  \draw[thick] (0.5,0.5) rectangle (5.5,3.5);
+  \fill (3,2) circle (1.5pt) node[below right]{O};
+  \draw[->,Aqua,thick] (1,3) -- ++(1.2,0.6) node[right]{$\mathbf{F}_1$};
+  \draw[->,Orange,thick] (5,1) -- ++(-1.0,1.2) node[above left]{$\mathbf{F}_2$};
+  \draw[->,Purple,thick] (3,0.5) -- ++(0,1.5) node[left]{$\mathbf{F}_3$};
+\end{tikzpicture}
+\end{center}
+
+\section*{Numeric Resultant Engine}
+\FBDInit
+\AddForce{F1}{ 400}{ 200}{ 0}{ 1.0}{ 3.0}{ 0.0}
+\AddForce{F2}{-300}{ 350}{ 0}{ 5.0}{ 1.0}{ 0.0}
+\AddForce{F3}{   0}{ 500}{ 0}{ 3.0}{ 0.5}{ 0.0}
+\AddCouple{M1}{0}{0}{120}
+
+\ResultantVectors
+
+\section*{Component Form and Cross-Product}
+\[
+\mathbf{R}=
+\begin{bmatrix}\sum_i F_{xi}\\ \sum_i F_{yi}\\ \sum_i F_{zi}\end{bmatrix},
+\qquad
+\mathbf{M}_O=
+\sum_i
+\begin{bmatrix}
+y_i F_{zi}-z_i F_{yi}\\
+z_i F_{xi}-x_i F_{zi}\\
+x_i F_{yi}-y_i F_{xi}
+\end{bmatrix}
++
+\sum_i
+\begin{bmatrix}M_{xi}\\M_{yi}\\M_{zi}\end{bmatrix}.
+\]
+
+\section*{Gradient and Local Linearization}
+\[
+\frac{\partial \mathbf{R}}{\partial \mathbf{q}}=
+\begin{bmatrix}
+\partial R_x/\partial \mathbf{q}\\
+\partial R_y/\partial \mathbf{q}\\
+\partial R_z/\partial \mathbf{q}
+\end{bmatrix},\quad
+\frac{\partial \mathbf{M}_O}{\partial \mathbf{q}}=
+\begin{bmatrix}
+\partial M_x/\partial \mathbf{q}\\
+\partial M_y/\partial \mathbf{q}\\
+\partial M_z/\partial \mathbf{q}
+\end{bmatrix},
+\quad
+\begin{bmatrix}\mathbf{R}\\ \mathbf{M}_O\end{bmatrix}(\mathbf{q}+\Delta\mathbf{q})
+\approx
+\begin{bmatrix}\mathbf{R}\\ \mathbf{M}_O\end{bmatrix}(\mathbf{q})
++
+J\,\Delta\mathbf{q},
+\]
+with \( J \) the Jacobian.
+
+\section*{Taylor-Series Mapping for \(\mathbf{M}_O\)}
+\[
+\mathbf{M}_O(\mathbf{q}+\Delta\mathbf{q})
+\approx
+\mathbf{M}_O(\mathbf{q})
++
+\frac{\partial \mathbf{M}_O}{\partial \mathbf{q}}\Delta\mathbf{q}
++
+\tfrac12\,\Delta\mathbf{q}^\top H(\mathbf{M}_O)\,\Delta\mathbf{q}.
+\]
+
+\section*{MER-Normalized Unit Directions}
+\[
+\hat{\mathbf{R}}=\frac{\mathbf{R}}{\max(\|\mathbf{R}\|,\MER)},\qquad
+\hat{\mathbf{M}}=\frac{\mathbf{M}_O}{\max(\|\mathbf{M}_O\|,\MER)}.
+\]
+
+\section*{Plotting Template}
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=0.85\textwidth,height=0.42\textwidth,axis lines=left,xlabel={$x$},ylabel={$R_y(x)$}]
+\addplot+[very thick,blue] table[row sep=\\]{
+x y\\
+0.0 200\\
+0.2 240\\
+0.4 280\\
+0.6 320\\
+0.8 360\\
+1.0 400\\
+};
+\end{axis}
+\end{tikzpicture}
+\end{center}
+
+\section*{Non-Euclidean Norm}
+\[
+\|\mathbf{v}\|_g=\sqrt{v_i\,g_{ij}\,v_j},\qquad
+\min_{\mathbf{q}}\;\|\mathbf{R}(\mathbf{q})\|_g^2+\|\mathbf{M}_O(\mathbf{q})\|_g^2,\quad \mathrm{MER}=\MER.
+\]
+
+\end{document}
